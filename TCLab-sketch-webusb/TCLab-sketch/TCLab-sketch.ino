@@ -61,17 +61,31 @@
 */
 
 #include "Arduino.h"
+#include <NTC_Thermistor.h>
+#include <PID_v1.h>
 
-// determine board type
-#if defined(__AVR_ATmega328P__) || defined(__AVR_ATmega168__)
-  String boardType = "Arduino Uno";
-#elif defined(__AVR_ATmega32U4__) || defined(__AVR_ATmega16U4__)
-  String boardType = "Arduino Leonardo/Micro";
-#elif defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__)
-  String boardType = "Arduino Mega";
-#else 
-  String boardType = "Unknown board";
-#endif
+#define N_CHANNEL 5
+
+NTC_Thermistor* thermistors[N_CHANNEL];
+
+String boardType = "Arduino Due";
+
+double Kp=2, Ki=5, Kd=1;
+
+double setPoints[N_CHANNEL];
+double valInputs[N_CHANNEL];
+double valOutputs[N_CHANNEL];
+
+//PID myPID1(&Input1, &Output1, &setPoint1, Kp, Ki, Kd, DIRECT);
+PID * myPIDs [N_CHANNEL];
+
+const int inputPins [N_CHANNEL]   = {0,1,2,3,4}; 
+const int outputPins [N_CHANNEL]   = {5,6,7,8,9}; 
+
+#define REFERENCE_RESISTANCE 8000
+#define NOMINAL_RESISTANCE     100000
+#define NOMINAL_TEMPERATURE    25
+#define B_VALUE                3950
 
 // Enable debugging output
 const bool DEBUG = false;
@@ -82,37 +96,12 @@ const long baud = 115200;      // serial baud rate
 const char sp = ' ';           // command separator
 const char nl = '\n';          // command terminator
 
-// pin numbers corresponding to signals on the TC Lab Shield
-const int pinT1   = 0;         // T1
-const int pinT2   = 2;         // T2
-const int pinQ1   = 3;         // Q1
-const int pinQ2   = 5;         // Q2
-const int pinLED1 = 9;         // LED1
-
-// temperature alarm limits
-const int limT1   = 50;       // T1 high alarm (°C)
-const int limT2   = 50;       // T2 high alarm (°C)
-
-// LED1 levels
-const int hiLED   =  60;       // hi LED
-const int loLED   = hiLED/16;  // lo LED
-
 // global variables
 char Buffer[64];               // buffer for parsing serial input
 int buffer_index = 0;          // index for Buffer
 String cmd;                    // command
 float val;                     // command value
-int ledStatus;                 // 1: loLED
-                               // 2: hiLED
-                               // 3: loLED blink
-                               // 4: hiLED blink
-long ledTimeout = 0;           // when to return LED to normal operation
-float LED = 100;               // LED override brightness
-float P1 = 200;                // heater 1 power limit in units of pwm. Range 0 to 255
-float P2 = 100;                // heater 2 power limit in units in pwm, range 0 to 255
-float Q1 = 0;                  // last value written to heater 1 in units of percent
-float Q2 = 0;                  // last value written to heater 2 in units of percent
-int alarmStatus;               // hi temperature alarm status
+
 boolean newData = false;       // boolean flag indicating new command
 
 
@@ -141,7 +130,10 @@ void echoCommand() {
 
 // return thermister temperature in °C
 inline float readTemperature(int pin) {
-  return analogRead(pin) * 0.3223 - 50.0;
+  if ((pin>0)&&(pin<5)){
+    return thermistors[pin]->readCelsius();
+  }
+  return 0;
 }
 
 void parseCommand(void) {
@@ -172,137 +164,81 @@ void sendResponse(String msg) {
 
 void dispatchCommand(void) {
   if (cmd == "A") {
-    setHeater1(0);
-    setHeater2(0);
+    for (int i=0; i<N_CHANNEL; i++){
+      setHeater(i,0);
+    }
     sendResponse("Start");
   }
-  else if (cmd == "LED") {
-    ledTimeout = millis() + 10000;
-    LED = max(0, min(100, val));
-    sendResponse(String(LED));
+  else if (cmd.startsWith("Q")) {
+    int index= cmd[1]-'0';
+    setHeater(index,val);
+    sendResponse(String(setPoints[index]));
   }
-  else if (cmd == "P1") {
-    P1 = max(0, min(255, val));
-    sendResponse(String(P1));
-  }
-  else if (cmd == "P2") {
-    P2 = max(0, min(255, val));
-    sendResponse(String(P2));
-  }
-  else if (cmd == "Q1") {
-    setHeater1(val);
-    sendResponse(String(Q1));
-  }
-  else if (cmd == "Q2") {
-    setHeater2(val);
-    sendResponse(String(Q2));
-  }
-  else if (cmd == "R1") {
-    sendResponse(String(Q1));
-  }
-  else if (cmd == "R2") {
-    sendResponse(String(Q2));
-  }
-  else if (cmd == "SCAN") {
-    sendResponse(String(readTemperature(pinT1)));
-    sendResponse(String(readTemperature(pinT2)));
-    sendResponse(String(Q1));
-    sendResponse(String(Q2));
-  }
-  else if (cmd == "T1") {
-    sendResponse(String(readTemperature(pinT1)));
-  }
-  else if (cmd == "T2") {
-    sendResponse(String(readTemperature(pinT2)));
+  else if (cmd.startsWith("T")) {
+    int index= cmd[1]-'0';
+    sendResponse(String(readTemperature(index)));
   }
   else if (cmd == "VER") {
     sendResponse("TCLab Firmware " + vers + " " + boardType);
   }
   else if (cmd == "X") {
-    setHeater1(0);
-    setHeater2(0);
+    for (int i=0; i<N_CHANNEL; i++){
+      setHeater(i,0);
+    }
     sendResponse("Stop");
   }
   else if (cmd.length() > 0) {
-    setHeater1(0);
-    setHeater2(0);
+    for (int i=0; i<N_CHANNEL; i++){
+      setHeater(i,0);
+    }
     sendResponse(cmd);
   }
   Serial.flush();
   cmd = "";
 }
 
-void checkAlarm(void) {
-  if ((readTemperature(pinT1) > limT1) or (readTemperature(pinT2) > limT2)) {
-    alarmStatus = 1;
-  }
-  else {
-    alarmStatus = 0;
+
+
+void setHeater(int index, float qval) {
+  if ((index>0)&&(index<N_CHANNEL)){
+    setPoints[index] = qval;
   }
 }
 
-void updateStatus(void) {
-  // determine led status
-  ledStatus = 1;
-  if ((Q1 > 0) or (Q2 > 0)) {
-    ledStatus = 2;
-  }
-  if (alarmStatus > 0) {
-    ledStatus += 2;
-  }
-  // update led depending on ledStatus
-  if (millis() < ledTimeout) {        // override led operation
-    analogWrite(pinLED1, LED);
-  }
-  else {
-    switch (ledStatus) {
-      case 1:  // normal operation, heaters off
-        analogWrite(pinLED1, loLED);
-        break;
-      case 2:  // normal operation, heater on
-        analogWrite(pinLED1, hiLED);
-        break;
-      case 3:  // high temperature alarm, heater off
-        if ((millis() % 2000) > 1000) {
-          analogWrite(pinLED1, loLED);
-        } else {
-          analogWrite(pinLED1, loLED/4);
-        }
-        break;
-      case 4:  // high temperature alarm, heater on
-        if ((millis() % 2000) > 1000) {
-          analogWrite(pinLED1, hiLED);
-        } else {
-          analogWrite(pinLED1, loLED);
-        }
-        break;
-    }   
+
+void updatePID(){
+  for (int i =0; i< N_CHANNEL; i++){
+      valInputs[i]=readTemperature(i);
+      myPIDs[i]->Compute();
+      analogWrite(outputPins[1], valOutputs[i]);
   }
 }
 
-// set Heater 1
-void setHeater1(float qval) {
-  Q1 = max(0., min(qval, 100.));
-  analogWrite(pinQ1, (Q1*P1)/100);
-}
-
-// set Heater 2
-void setHeater2(float qval) {
-  Q2 = max(0., min(qval, 100.));
-  analogWrite(pinQ2, (Q2*P2)/100);
-}
 
 // arduino startup
 void setup() {
-  analogReference(EXTERNAL);
+  //analogReference(EXTERNAL);
   while (!Serial) {
     ; // wait for serial port to connect.
   }
   Serial.begin(baud);
   Serial.flush();
-  setHeater1(0);
-  setHeater2(0);
-  ledTimeout = millis() + 1000;
+  for (int i=0; i<N_CHANNEL; i++){
+    setHeater(i,0);
+    NTC_Thermistor *tmp_thermistor = new NTC_Thermistor(
+      inputPins[i],
+      REFERENCE_RESISTANCE,
+      NOMINAL_RESISTANCE,
+      NOMINAL_TEMPERATURE,
+      B_VALUE
+    );
+    thermistors[i]=tmp_thermistor;
+
+    PID tmp_PID(&valInputs[i], &valOutputs[i], &setPoints[i], Kp, Ki, Kd, DIRECT);
+    tmp_PID.SetMode(AUTOMATIC);
+    myPIDs[i]= &tmp_PID;
+   
+  }
 }
 
 // arduino main event loop
@@ -311,6 +247,5 @@ void loop() {
   if (DEBUG) echoCommand();
   parseCommand();
   dispatchCommand();
-  checkAlarm();
-  updateStatus();
+  updatePID();
 }
