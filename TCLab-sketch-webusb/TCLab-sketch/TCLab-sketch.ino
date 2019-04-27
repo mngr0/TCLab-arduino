@@ -78,8 +78,8 @@ double valOutputs[N_CHANNEL];
 
 PID* myPIDs [N_CHANNEL];
 
-const int offsets [N_CHANNEL]   = {10.0, 10.0, 10.0, 10.0};
-const int enables [N_CHANNEL] = {1, 0, 0, 0};
+int offsets [N_CHANNEL]   = {10.0, 10.0, 10.0, 10.0};
+int enables [N_CHANNEL] = {1, 0, 0, 0};
 const int inputPins [N_CHANNEL]   = {A0, A1, A2, A3};
 const int outputPins [N_CHANNEL]   = { 13, 7, 12, 11 }; //TODO 14 added
 
@@ -179,6 +179,16 @@ void dispatchCommand(void) {
     int index = cmd[1] - '0';
     sendResponse(String(valInputs[index]));
   }
+    else if (cmd.startsWith("E")) {
+    int index = cmd[1] - '0';
+    enable(index);
+    sendResponse(String(enables[index]));
+  }
+    else if (cmd.startsWith("D")) {
+    int index = cmd[1] - '0';
+    disable(index);
+    sendResponse(String(enables[index]));
+  }
   else if (cmd == "VER") {
     sendResponse("TCLab Firmware " + vers + " " + boardType);
   }
@@ -205,6 +215,18 @@ void setHeater(int index, float qval) {
     setPoints[index] = qval;
   }
 }
+
+void enable(int index) {
+  if ((index >= 0) && (index < N_CHANNEL)) {
+    enables[index]=true;
+  }
+}
+void disable(int index) {
+  if ((index >= 0) && (index < N_CHANNEL)) {
+    enables[index]=false;
+  }
+}
+
 
 
 void updatePID() {
