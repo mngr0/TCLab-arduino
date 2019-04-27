@@ -89,7 +89,7 @@ const int outputPins [N_CHANNEL]   = { 13, 7, 12, 11 }; //TODO 14 added
 #define B_VALUE                3950
 
 // Enable debugging output
-const bool DEBUG = true;
+const bool DEBUG = false;
 
 // constants
 const String vers = "1.4.3";   // version of this firmware
@@ -211,19 +211,19 @@ void updatePID() {
   for (int i = 0; i < N_CHANNEL; i++) {
     valInputs[i] = readTemperature(i);
     //Serial.print(i);
-    Serial.print("\t");
-    Serial.print(valInputs[i]);
+    //Serial.print("\t");
+    //Serial.print(valInputs[i]);
     myPIDs[i]->Compute();
-    Serial.print("\t");
-    Serial.print(valOutputs[i]);
+    ///Serial.print("\t");
+    //Serial.print(valOutputs[i]);
     if (enables[i]) {
       analogWrite(outputPins[i], valOutputs[i]);
-      Serial.print("!");
+      //Serial.print("!");
     }
-    Serial.print("->");
-    Serial.print(setPoints[i]);
+    //Serial.print("->");
+    //Serial.print(setPoints[i]);
   }
-  Serial.println();
+  //Serial.println();
 }
 
 
@@ -235,12 +235,12 @@ void setup() {
    }
   Serial.begin(baud);
   Serial.flush();
-  Serial.println("start");
+  //Serial.println("start");
 
   for (int i = 0; i < N_CHANNEL; i++) {
     setHeater(i, 0);
 
-    Serial.println(i);
+    //Serial.println(i);
     thermistors[i] = new NTC_Thermistor(
       inputPins[i],
       REFERENCE_RESISTANCE,
@@ -255,7 +255,7 @@ void setup() {
     myPIDs[i]->SetMode(AUTOMATIC);
 
   }
-  Serial.println("end setup");
+  //Serial.println("end setup");
   setHeater(0, 100);
 }
 
